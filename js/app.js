@@ -14,6 +14,7 @@ const SAVE_EVERY_MS = 2000;
 let state = loadState();
 let screen = 'home';
 let persisted = null;
+let offlineReady = null; // null：還在確認；true：已存進手機；false：瀏覽器不支援
 let ui = { input: '', wrong: null, flash: false, summary: null };
 let timer = null;
 let lastTick = 0;
@@ -30,6 +31,27 @@ render();
 requestPersist().then((v) => { persisted = v; if (screen === 'home') render(); });
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('sw.js').catch(() => {});
+  checkOffline();
+  navigator.serviceWorker.addEventListener('controllerchange', checkOffline);
+} else {
+  offlineReady = false;
+}
+
+/** 確認 App 已經存進手機：service worker 啟用，而且快取裡有首頁。 */
+async function checkOffline() {
+  try {
+    await navigator.serviceWorker.ready;
+    const home = new URL('./', location.href).href;
+    const keys = (await caches.keys()).filter((k) => k.startsWith('cht-calc-'));
+    let found = false;
+    for (const k of keys) {
+      if (await (await caches.open(k)).match(home)) found = true;
+    }
+    offlineReady = found;
+  } catch {
+    offlineReady = false;
+  }
+  if (screen === 'home') render();
 }
 
 document.addEventListener('visibilitychange', () => {
@@ -82,6 +104,9 @@ function renderHome() {
     <header>
       <h1>計算練習</h1>
       <p class="muted" style="margin:4px 0 0">${d.getMonth() + 1} 月 ${d.getDate()} 日</p>
+      <p class="note offline ${offlineReady ? 'ready' : ''}">${offlineReady
+        ? '✓ 已存進手機，沒有網路也能練'
+        : offlineReady === false ? '還不能離線使用：請保持網路，重新打開一次 App' : '正在存進手機，先保持網路連線……'}</p>
     </header>
 
     <section class="stats" aria-label="今天的練習">
