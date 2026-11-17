@@ -93,6 +93,8 @@ button:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
 .banner p { margin: 0; font-size: 16px; }
 
 .card { background: var(--surface); border-radius: var(--radius); padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+.modules { display: flex; flex-direction: column; gap: 12px; }
+.modules h2 { margin-bottom: 0; }
 .card-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
 .card-head h3 { margin: 0; font-size: 22px; }
 .card-head .acc { font-size: 16px; color: var(--muted); font-variant-numeric: tabular-nums; }
@@ -172,9 +174,21 @@ button:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
 .q-prompt { font-size: 44px; font-weight: 700; line-height: 1.2; font-variant-numeric: tabular-nums; word-break: break-all; }
 .q-prompt.mono, .answer.mono { font-family: var(--mono); letter-spacing: .02em; }
 .q-prompt sub { font-size: .4em; color: var(--muted); font-weight: 500; }
+.q-prompt { white-space: pre-line; }
+.q-prompt.long { font-size: 34px; }
+.q-prompt.xlong { font-size: 26px; }
+.q-prompt.xxlong { font-size: 22px; }
+
+/* 商和餘數兩格，點一下切換要填哪一格 */
+.answer-pair { display: flex; gap: 10px; width: 100%; justify-content: center; }
+.answer.slot { flex: 1; max-width: 200px; flex-direction: column; gap: 0; font: inherit; font-size: 36px; font-weight: 700; color: var(--text); }
+.answer.slot small { font-size: 14px; font-weight: 500; color: var(--muted); }
+.answer.slot.active { border-color: var(--accent); }
+.answer.slot.empty { color: var(--muted); }
 
 .answer {
   min-width: 60%;
+  max-width: 100%;
   min-height: 64px;
   padding: 6px 16px;
   border-radius: 14px;
@@ -188,6 +202,8 @@ button:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
   justify-content: center;
 }
 .answer.empty { color: var(--muted); }
+.answer.long { font-size: 30px; }
+.answer.xlong { font-size: 24px; }
 .answer.good { border-color: var(--good); background: var(--good-bg); color: var(--good); }
 
 .result { border-radius: var(--radius); padding: 14px 16px; background: var(--bad-bg); }
@@ -196,7 +212,7 @@ button:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
 .result .yours { color: var(--bad); }
 
 .steps { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
-.steps li { background: var(--surface); border-radius: 12px; padding: 10px 14px; font-size: 19px; font-variant-numeric: tabular-nums; }
+.steps li { background: var(--surface); border-radius: 12px; padding: 10px 14px; font-size: 19px; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
 .steps table { width: 100%; border-collapse: collapse; font-family: var(--mono); font-size: 18px; }
 .steps th { color: var(--muted); font-weight: 500; font-size: 15px; text-align: left; padding: 4px 6px; border-bottom: 1px solid var(--line); }
 .steps td { padding: 6px; border-bottom: 1px solid var(--line); }
@@ -234,6 +250,14 @@ button:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
 .pad.next { grid-template-columns: 1fr; grid-template-rows: 1fr; height: auto; min-height: 0; }
 .pad.next .key { min-height: 88px; }
 .pad.hex .wide { grid-column: span 2; }
+/* 商餘數、IP、負數：4 欄，右下角是高的確定鍵 */
+.pad.four { grid-template-columns: repeat(4, 1fr); grid-template-rows: repeat(4, 1fr); }
+.pad.four .tall { grid-row: span 2; }
+.pad.four .wide3 { grid-column: span 3; }
+.key.dot { font-size: 40px; line-height: 1; }
+/* 是非題：兩顆大按鈕 */
+.pad.choice { grid-template-columns: 1fr; grid-template-rows: 1fr 1fr; height: 34vh; height: 34dvh; min-height: 220px; }
+.pad.choice .key { font-size: 24px; }
 
 .key {
   border-radius: 14px;

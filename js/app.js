@@ -1,4 +1,4 @@
-// 畫面與操作。題目和計分邏輯在 engine.js、arith.js、base.js。
+// 畫面與操作。題目和計分邏輯在 engine.js 和各模組檔案。
 import { loadState, saveState, requestPersist } from './storage.js';
 import {
   MODULES, generateProblem, recordAnswer, isCorrect, setLevel, streak, dayKey, accuracy,
@@ -14,11 +14,16 @@ const SAVE_EVERY_MS = 2000;
 let state = loadState();
 let screen = 'home';
 let persisted = null;
-let offlineReady = null; // null：還在確認；true：已存進手機；false：瀏覽器不支援
-let ui = { input: '', wrong: null, flash: false, summary: null };
+let offlineReady = null; // null：還在確認；true：已存進手機；false：還不能離線
+let ui = freshUi();
+let summary = null; // 上一次練習的結算
 let timer = null;
 let lastTick = 0;
 let lastSave = 0;
+
+function freshUi() {
+  return { input: '', fields: ['', ''], field: 0, wrong: null, flash: false };
+}
 
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const pct = (x) => (x == null ? '—' : `${Math.round(x * 100)}%`);
@@ -91,6 +96,23 @@ function toast(text) {
 
 // ---------- 首頁 ----------
 
+function moduleCard(id, m) {
+  const mod = state.modules[id];
+  return `
+  <div class="card">
+    <div class="card-head">
+      <h3>${esc(m.name)}</h3>
+      <span class="acc">最近正確率 ${pct(accuracy(mod.recent))}</span>
+    </div>
+    <p class="level-name">Lv${mod.level}：${esc(m.levelNames[mod.level])}</p>
+    <div class="chips" role="group" aria-label="${esc(m.name)}等級">
+      ${Array.from({ length: m.maxLevel }, (_, i) => i + 1).map((lv) => `
+        <button class="chip" data-act="level" data-module="${id}" data-level="${lv}" aria-pressed="${lv === mod.level}">Lv${lv}</button>`).join('')}
+    </div>
+    <button class="btn primary big" data-act="start" data-module="${id}">開始練習</button>
+  </div>`;
+}
+
 function renderHome() {
   const today = dayKey();
   const todayN = state.days[today]?.n || 0;
@@ -98,6 +120,8 @@ function renderHome() {
   const weak = weakTags(state);
   const { pace, minutes, theme } = state.settings;
   const d = new Date();
+  const groups = {};
+  for (const [id, m] of Object.entries(MODULES)) (groups[m.group] ||= []).push([id, m]);
 
   app.innerHTML = `
   <div class="home">
@@ -126,26 +150,6 @@ function renderHome() {
       <button class="btn small" data-act="export">備份</button>
     </div>` : ''}
 
-    <section aria-label="練習模組">
-      ${Object.entries(MODULES).map(([id, m]) => {
-        const mod = state.modules[id];
-        return `
-        <div class="card" style="margin-bottom:12px">
-          <div class="card-head">
-            <h3>${esc(m.name)}</h3>
-            <span class="acc">最近正確率 ${pct(accuracy(mod.recent))}</span>
-          </div>
-          <p class="level-name">Lv${mod.level}：${esc(m.levelNames[mod.level])}</p>
-          <div class="chips" role="group" aria-label="${esc(m.name)}等級">
-            ${Array.from({ length: m.maxLevel }, (_, i) => i + 1).map((lv) => `
-              <button class="chip" data-act="level" data-module="${id}" data-level="${lv}" aria-pressed="${lv === mod.level}">Lv${lv}</button>`).join('')}
-          </div>
-          <button class="btn primary big" data-act="start" data-module="${id}">開始練習</button>
-        </div>`;
-      }).join('')}
-      <p class="note">等級會自動調整：同一級最近 20 題答對 9 成以上就升級，最近 10 題答對不到 6 成就降一級。也可以直接點等級切換。</p>
-    </section>
-
     <section>
       <h2>最常錯的題型</h2>
       ${weak.length ? `
@@ -154,6 +158,13 @@ function renderHome() {
       </ul>
       <p class="note">這些題型之後會比較常出現。</p>` : '<p class="note" style="margin:0">練幾題之後，這裡會列出最常錯的題型。</p>'}
     </section>
+
+    ${Object.entries(groups).map(([g, list]) => `
+    <section class="modules" aria-label="${esc(g)}">
+      <h2>${esc(g)}</h2>
+      ${list.map(([id, m]) => moduleCard(id, m)).join('')}
+    </section>`).join('')}
+    <p class="note" style="margin-top:-8px">等級會自動調整：同一級最近 20 題答對 9 成以上就升級，最近 10 題答對不到 6 成就降一級。也可以直接點等級切換。</p>
 
     <section>
       <h2>設定</h2>
@@ -210,10 +221,12 @@ app.addEventListener('click', (e) => {
     case 'export': exportBackup(); break;
     case 'import': importInput.value = ''; importInput.click(); break;
     case 'key': pressKey(btn.dataset.key); break;
+    case 'field': if (!ui.wrong) { ui.field = Number(btn.dataset.index); renderPractice(); } break;
+    case 'choose': if (!ui.wrong && !ui.flash) { ui.input = value; submit(); } break;
     case 'next': nextAfterWrong(); break;
     case 'quit': endSession(); break;
     case 'home': go('home'); break;
-    case 'again': startSession(ui.summary.module); break;
+    case 'again': startSession(summary.module); break;
     default: break;
   }
 });
@@ -241,7 +254,7 @@ function startSession(moduleId) {
 function resumeSession() {
   if (!state.session) return;
   if (!state.session.problem) newProblem();
-  ui = { input: '', wrong: null, flash: false, summary: null };
+  ui = freshUi();
   screen = 'practice';
   startTimer();
   render();
@@ -250,8 +263,7 @@ function resumeSession() {
 function newProblem() {
   const s = state.session;
   s.problem = generateProblem(state, s.module, Math.random);
-  ui.input = '';
-  ui.wrong = null;
+  ui = freshUi();
   save();
 }
 
@@ -293,41 +305,93 @@ function updateClock() {
   if (s.pace === 'sprint' && timeUp() && !ui.wrong) endSession();
 }
 
+// ---- 題目的顯示方式 ----
+
+const EQ_TYPES = new Set(['x2', 'half', 'binadd']);
+const isMono = (base) => base === 2 || base === 16;
+
+function promptHtml(p) {
+  const eq = p.module === 'arith' || EQ_TYPES.has(p.type) ? ' =' : '';
+  const sub = p.module === 'base' ? `<sub>(${p.promptBase})</sub>` : '';
+  // 中文字的寬度大約是數字的兩倍，算兩格
+  const len = [...p.prompt.replace(/\n.*/s, '')].reduce((n, ch) => n + (ch.codePointAt(0) > 0x2e80 ? 2 : 1), 0);
+  const mono = isMono(p.promptBase) || p.module === 'subnet' ? 'mono' : '';
+  // 等寬字比較寬，提早縮小；二進位加法這種超過 20 字的再小一級
+  const size = len > 20 ? 'xxlong' : len > (mono ? 12 : 16) ? 'xlong' : len > (mono ? 8 : 9) ? 'long' : '';
+  return `<div class="q-prompt ${mono} ${size}">${esc(p.prompt)}${sub}${eq}</div>`;
+}
+
+function answerMono(p) {
+  return isMono(p.answerBase) || p.answerKind === 'ip';
+}
+
+function shown(p, s) {
+  return p.answerBase === 2 && !p.answerKind ? groupBits(s) : s;
+}
+
+function answerHtml(p) {
+  if (p.keypad === 'choice') return '';
+  if (p.keypad === 'divmod') {
+    return `<div class="answer-pair">
+      ${['商', '餘數'].map((name, i) => `
+        <button class="answer slot ${ui.field === i ? 'active' : ''} ${ui.fields[i] === '' ? 'empty' : ''} ${ui.flash ? 'good' : ''}"
+          data-act="field" data-index="${i}" aria-label="${name}">
+          <small>${name}</small>${esc(ui.fields[i] === '' ? '＿' : ui.fields[i])}
+        </button>`).join('')}
+    </div>`;
+  }
+  const v = ui.input === '' ? '＿' : shown(p, ui.input);
+  const size = v.length > 15 ? 'xlong' : v.length > 11 ? 'long' : '';
+  return `<div class="answer ${size} ${answerMono(p) ? 'mono' : ''} ${ui.input === '' ? 'empty' : ''} ${ui.flash ? 'good' : ''}" aria-label="你的答案">${esc(v)}</div>`;
+}
+
+function correctText(p) {
+  return p.answerText || (p.answerBase === 2 ? groupBits(p.answer) : p.answer);
+}
+
+function givenText(p, given) {
+  if (p.keypad === 'divmod') {
+    const [q, r] = given.split(',');
+    return `商 ${q}，餘數 ${r}`;
+  }
+  if (p.keypad === 'choice') return given === 'yes' ? '「是同一個網段」' : '「不是同一個網段」';
+  return shown(p, given);
+}
+
+function stepsHtml(p) {
+  return `<ol class="steps">
+    ${p.steps.map((st) => (typeof st === 'string'
+      ? `<li>${esc(st).replace(/(\d)\.(?=\d)/g, '$1.<wbr>')}</li>`
+      : `<li><table><thead><tr>${st.table.head.map((h) => `<th>${esc(h)}</th>`).join('')}</tr></thead>
+          <tbody>${st.table.rows.map((r) => `<tr>${r.map((c) => `<td>${esc(c)}</td>`).join('')}</tr>`).join('')}</tbody></table></li>`)).join('')}
+  </ol>`;
+}
+
 function renderPractice() {
   const s = state.session;
   if (!s) { go('home'); return; }
   const p = s.problem;
-  const mono = p.module === 'base' && p.answerBase !== 10;
-  const promptMono = p.module === 'base' && p.promptBase !== 10;
-  const sub = p.module === 'base' ? `<sub>(${p.promptBase})</sub>` : '';
   const clock = s.pace === 'sprint'
     ? `<span class="timer" aria-label="剩餘秒數">${Math.max(0, Math.ceil((s.goalMs - s.elapsedMs) / 1000))}</span>`
     : '<span></span>';
 
-  const shownInput = ui.input === '' ? '＿' : (p.answerBase === 2 ? groupBits(ui.input) : ui.input);
-
   let middle;
-  if (ui.wrong) {
+  if (ui.wrong !== null) {
     middle = `
     <div class="question explain">
       <div class="result">
-        <p class="muted">${esc(p.label || '算算看')}：${esc(p.prompt)}${p.module === 'arith' ? ' = ?' : ''}</p>
-        <p class="big">正確答案：<span class="${mono ? 'mono' : ''}">${esc(p.answerBase === 2 ? groupBits(p.answer) : p.answer)}</span></p>
-        <p class="yours">你寫的是 ${esc(ui.wrong)}</p>
+        <p class="muted">${esc((p.label || '算算看').replace(/[？?]$/, ''))}：${esc(p.prompt.replace(/\n/g, '、'))}</p>
+        <p class="big">正確答案：<span class="${answerMono(p) ? 'mono' : ''}">${esc(correctText(p))}</span></p>
+        <p class="yours">${p.keypad === 'choice' ? '你選的是' : '你寫的是'} ${esc(givenText(p, ui.wrong))}</p>
       </div>
-      <ol class="steps">
-        ${p.steps.map((st) => (typeof st === 'string'
-          ? `<li>${esc(st)}</li>`
-          : `<li><table><thead><tr>${st.table.head.map((h) => `<th>${esc(h)}</th>`).join('')}</tr></thead>
-              <tbody>${st.table.rows.map((r) => `<tr>${r.map((c) => `<td>${esc(c)}</td>`).join('')}</tr>`).join('')}</tbody></table></li>`)).join('')}
-      </ol>
+      ${stepsHtml(p)}
     </div>`;
   } else {
     middle = `
     <div class="question">
       ${p.label ? `<div class="q-label">${esc(p.label)}</div>` : ''}
-      <div class="q-prompt ${promptMono ? 'mono' : ''}">${esc(p.prompt)}${sub}${p.module === 'arith' ? ' =' : ''}</div>
-      <div class="answer ${mono ? 'mono' : ''} ${ui.input === '' ? 'empty' : ''} ${ui.flash ? 'good' : ''}" aria-label="你的答案">${esc(shownInput)}</div>
+      ${promptHtml(p)}
+      ${answerHtml(p)}
     </div>`;
   }
 
@@ -340,27 +404,56 @@ function renderPractice() {
     </div>
     <div class="progress" aria-hidden="true"><i style="width:${Math.min(100, (s.elapsedMs / s.goalMs) * 100)}%"></i></div>
     ${middle}
-    ${ui.wrong ? `
+    ${ui.wrong !== null ? `
     <div class="pad next"><button class="key ok" data-act="next">${timeUp() ? '看結果' : '看懂了，下一題'}</button></div>`
     : keypad(p.keypad)}
   </section>`;
 }
 
+function canSubmit(p) {
+  if (p.keypad === 'divmod') return ui.fields[0] !== '' && ui.fields[1] !== '';
+  if (p.keypad === 'ip') return /^\d{1,3}(\.\d{1,3}){3}$/.test(ui.input);
+  if (p.keypad === 'signed') return /\d/.test(ui.input);
+  return ui.input !== '';
+}
+
 function keypad(kind) {
-  const k = (key, cls = '', label = key) =>
-    `<button class="key ${cls}" data-act="key" data-key="${key}" ${key === 'del' ? 'aria-label="刪除"' : ''}>${label}</button>`;
-  const del = (cls = 'fn') => k('del', cls, '⌫');
-  const ok = (cls = 'ok') => `<button class="key ${cls}" data-act="key" data-key="ok" ${ui.input === '' ? 'disabled' : ''}>確定</button>`;
+  const p = state.session.problem;
+  const k = (key, cls = '', label = key, aria = '') =>
+    `<button class="key ${cls}" data-act="key" data-key="${key}" ${aria ? `aria-label="${aria}"` : ''}>${label}</button>`;
+  const del = (cls = 'fn') => k('del', cls, '⌫', '刪除');
+  const ok = (cls = 'ok') => {
+    const nextField = kind === 'divmod' && ui.field === 0;
+    const enabled = nextField ? ui.fields[0] !== '' : canSubmit(p);
+    return `<button class="key ${cls}" data-act="key" data-key="ok" ${enabled ? '' : 'disabled'}>${nextField ? '下一格' : '確定'}</button>`;
+  };
+  if (kind === 'choice') {
+    return `<div class="pad choice">
+      <button class="key" data-act="choose" data-value="yes">是，同一個網段</button>
+      <button class="key" data-act="choose" data-value="no">不是同一個網段</button>
+    </div>`;
+  }
   if (kind === 'bin') {
     return `<div class="pad bin">${k('0')}${k('1')}${del()}${ok()}</div>`;
   }
   if (kind === 'hex') {
     return `<div class="pad hex">
-      ${k('7')}${k('8')}${k('9')}${k('A', 'letter')}
+      ${k('1')}${k('2')}${k('3')}${k('A', 'letter')}
       ${k('4')}${k('5')}${k('6')}${k('B', 'letter')}
-      ${k('1')}${k('2')}${k('3')}${k('C', 'letter')}
+      ${k('7')}${k('8')}${k('9')}${k('C', 'letter')}
       ${k('0')}${k('D', 'letter')}${k('E', 'letter')}${k('F', 'letter')}
       ${del('fn wide')}${ok('ok wide')}
+    </div>`;
+  }
+  if (kind === 'divmod' || kind === 'ip' || kind === 'signed') {
+    const extra = kind === 'divmod' ? k('swap', 'fn', '⇄', '切換商和餘數')
+      : kind === 'ip' ? k('.', 'fn dot', '.', '點')
+        : k('neg', 'fn', '−', '負號');
+    return `<div class="pad four">
+      ${k('1')}${k('2')}${k('3')}${del()}
+      ${k('4')}${k('5')}${k('6')}${extra}
+      ${k('7')}${k('8')}${k('9')}${ok('ok tall')}
+      ${k('0', 'wide3')}
     </div>`;
   }
   return `<div class="pad dec">
@@ -369,25 +462,56 @@ function keypad(kind) {
   </div>`;
 }
 
-const ALLOWED = { dec: /^[0-9]$/, bin: /^[01]$/, hex: /^[0-9A-F]$/ };
+const DIGITS = { dec: /^[0-9]$/, bin: /^[01]$/, hex: /^[0-9A-F]$/, divmod: /^[0-9]$/, ip: /^[0-9]$/, signed: /^[0-9]$/ };
 
 function pressKey(key) {
   const s = state.session;
-  if (!s || ui.wrong || ui.flash) return;
-  if (key === 'del') ui.input = ui.input.slice(0, -1);
-  else if (key === 'ok') { submit(); return; }
-  else if (ALLOWED[s.problem.keypad].test(key) && ui.input.length < MAX_INPUT) ui.input += key;
-  else return;
+  if (!s || ui.wrong !== null || ui.flash) return;
+  const kind = s.problem.keypad;
+  if (kind === 'choice') return;
+  if (key === 'ok') {
+    if (kind === 'divmod' && ui.field === 0) {
+      if (ui.fields[0] !== '') { ui.field = 1; renderPractice(); }
+      return;
+    }
+    if (canSubmit(s.problem)) submit();
+    return;
+  }
+  if (key === 'del') {
+    if (kind === 'divmod') {
+      if (ui.fields[ui.field] === '' && ui.field === 1) ui.field = 0;
+      else ui.fields[ui.field] = ui.fields[ui.field].slice(0, -1);
+    } else ui.input = ui.input.slice(0, -1);
+  } else if (key === 'swap' && kind === 'divmod') {
+    ui.field = 1 - ui.field;
+  } else if (key === 'neg' && kind === 'signed') {
+    ui.input = ui.input.startsWith('−') ? ui.input.slice(1) : `−${ui.input}`;
+  } else if (key === '.' && kind === 'ip') {
+    if (ui.input === '' || ui.input.endsWith('.') || ui.input.split('.').length >= 4) return;
+    ui.input += '.';
+  } else if (DIGITS[kind]?.test(key)) {
+    if (kind === 'divmod') {
+      if (ui.fields[ui.field].length >= 4) return;
+      ui.fields[ui.field] += key;
+    } else if (kind === 'ip') {
+      if (ui.input.split('.').pop().length >= 3) return;
+      ui.input += key;
+    } else {
+      if (ui.input.replace('−', '').length >= MAX_INPUT) return;
+      ui.input += key;
+    }
+  } else return;
   renderPractice();
 }
 
 function submit() {
   const s = state.session;
-  if (ui.input === '') return;
-  const correct = isCorrect(s.problem, ui.input);
+  const p = s.problem;
+  const given = p.keypad === 'divmod' ? ui.fields.join(',') : ui.input;
+  const correct = isCorrect(p, given);
   s.n++;
   if (correct) s.correct++;
-  const change = recordAnswer(state, s.problem, correct);
+  const change = recordAnswer(state, p, correct);
   save();
   if (change === 1) toast(`升到 Lv${state.modules[s.module].level}！`);
   if (change === -1) toast(`先回到 Lv${state.modules[s.module].level} 練穩一點`);
@@ -403,7 +527,7 @@ function submit() {
       renderPractice();
     }, 350);
   } else {
-    ui.wrong = s.problem.answerBase === 2 ? groupBits(ui.input) : ui.input;
+    ui.wrong = given;
     save();
     renderPractice();
   }
@@ -421,27 +545,25 @@ function endSession() {
   const s = state.session;
   stopTimer();
   if (s) {
-    ui.summary = {
+    summary = {
       module: s.module,
       n: s.n,
       correct: s.correct,
       finished: s.elapsedMs >= s.goalMs,
       levelFrom: s.levelStart,
       levelTo: state.modules[s.module].level,
-      minutes: Math.round(s.elapsedMs / 60000),
     };
   }
   state.session = null;
-  ui.input = '';
-  ui.wrong = null;
+  ui = freshUi();
   save();
-  go(ui.summary ? 'summary' : 'home');
+  go(summary ? 'summary' : 'home');
 }
 
 // ---------- 結算 ----------
 
 function renderSummary() {
-  const r = ui.summary;
+  const r = summary;
   const name = MODULES[r.module].name;
   const lv = r.levelTo > r.levelFrom ? `升級了：Lv${r.levelFrom} → Lv${r.levelTo}`
     : r.levelTo < r.levelFrom ? `等級調整：Lv${r.levelFrom} → Lv${r.levelTo}` : `維持在 Lv${r.levelTo}`;
@@ -461,7 +583,7 @@ function renderSummary() {
 // ---------- 備份 ----------
 
 async function exportBackup() {
-  if (state.session) { tick(); }
+  if (state.session) tick();
   const name = `計算練習備份-${dayKey()}.json`;
   const backupState = { ...state, lastBackupAt: Date.now() };
   const file = new File([JSON.stringify(makeBackup(backupState), null, 2)], name, { type: 'application/json' });
@@ -514,11 +636,14 @@ importInput.addEventListener('change', async () => {
 
 document.addEventListener('keydown', (e) => {
   if (screen !== 'practice' || e.metaKey || e.ctrlKey || e.altKey) return;
-  if (ui.wrong) {
+  if (ui.wrong !== null) {
     if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); nextAfterWrong(); }
     return;
   }
   if (e.key === 'Enter') pressKey('ok');
   else if (e.key === 'Backspace') pressKey('del');
+  else if (e.key === '.') pressKey('.');
+  else if (e.key === '-') pressKey('neg');
+  else if (e.key === 'Tab') { e.preventDefault(); pressKey('swap'); }
   else if (/^[0-9a-fA-F]$/.test(e.key)) pressKey(e.key.toUpperCase());
 });

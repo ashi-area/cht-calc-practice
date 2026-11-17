@@ -1,12 +1,22 @@
 // 進度、等級升降、弱點加權出題。這裡都是純函式，不碰畫面和儲存。
 import { generateArith, ARITH_MAX_LEVEL, ARITH_LEVEL_NAMES } from './arith.js';
 import { generateBase, fromBase, BASE_MAX_LEVEL, BASE_LEVEL_NAMES } from './base.js';
+import {
+  generatePow2, POW2_MAX_LEVEL, POW2_LEVEL_NAMES, generateBinary, BINARY_MAX_LEVEL, BINARY_LEVEL_NAMES,
+} from './bits.js';
+import { generateUnits, UNITS_MAX_LEVEL, UNITS_LEVEL_NAMES } from './units.js';
+import { generateSubnet, SUBNET_MAX_LEVEL, SUBNET_LEVEL_NAMES, parseIp } from './subnet.js';
 
 export const STATE_VERSION = 1;
 
+/** 首頁依這個順序顯示。group 是首頁的分區標題。 */
 export const MODULES = {
-  arith: { name: '四則運算', maxLevel: ARITH_MAX_LEVEL, levelNames: ARITH_LEVEL_NAMES, generate: generateArith },
-  base: { name: '進位轉換', maxLevel: BASE_MAX_LEVEL, levelNames: BASE_LEVEL_NAMES, generate: generateBase },
+  arith: { group: '四則運算', name: '四則運算', maxLevel: ARITH_MAX_LEVEL, levelNames: ARITH_LEVEL_NAMES, generate: generateArith },
+  pow2: { group: '計概計算', name: '2 的次方', maxLevel: POW2_MAX_LEVEL, levelNames: POW2_LEVEL_NAMES, generate: generatePow2 },
+  base: { group: '計概計算', name: '進位轉換', maxLevel: BASE_MAX_LEVEL, levelNames: BASE_LEVEL_NAMES, generate: generateBase },
+  binary: { group: '計概計算', name: '二進位與補數', maxLevel: BINARY_MAX_LEVEL, levelNames: BINARY_LEVEL_NAMES, generate: generateBinary },
+  units: { group: '計概計算', name: '容量單位', maxLevel: UNITS_MAX_LEVEL, levelNames: UNITS_LEVEL_NAMES, generate: generateUnits },
+  subnet: { group: '計概計算', name: 'IPv4 子網路', maxLevel: SUBNET_MAX_LEVEL, levelNames: SUBNET_LEVEL_NAMES, generate: generateSubnet },
 };
 
 /** 升降級門檻，之後想調整只要改這裡。 */
@@ -19,10 +29,7 @@ export function defaultState() {
   return {
     version: STATE_VERSION,
     settings: { pace: 'untimed', minutes: 5, theme: 'dark' },
-    modules: {
-      arith: { level: 1, history: [], recent: [] },
-      base: { level: 1, history: [], recent: [] },
-    },
+    modules: Object.fromEntries(Object.keys(MODULES).map((id) => [id, { level: 1, history: [], recent: [] }])),
     tags: {},
     days: {},
     lastBackupAt: null,
@@ -93,9 +100,33 @@ export function streak(days, today = dayKey()) {
 
 // ---------- 答題 ----------
 
+const parseSigned = (s) => {
+  const t = String(s).replace(/−/g, '-').trim();
+  return /^-?\d+$/.test(t) ? Number(t) : NaN;
+};
+
+/** 判斷答案。input 一律是字串；商餘數題是「商,餘數」。 */
 export function isCorrect(problem, input) {
-  const v = fromBase(input, problem.answerBase);
-  return !Number.isNaN(v) && v === fromBase(problem.answer, problem.answerBase);
+  switch (problem.answerKind || 'int') {
+    case 'divmod': {
+      const [q, r] = String(input).split(',');
+      return /^\d+$/.test(q || '') && /^\d+$/.test(r || '') && `${Number(q)},${Number(r)}` === problem.answer;
+    }
+    case 'ip': {
+      const a = parseIp(input);
+      return !!a && a.join('.') === parseIp(problem.answer).join('.');
+    }
+    case 'choice':
+      return input === problem.answer;
+    case 'signed': {
+      const v = parseSigned(input);
+      return !Number.isNaN(v) && v === parseSigned(problem.answer);
+    }
+    default: {
+      const v = fromBase(input, problem.answerBase);
+      return !Number.isNaN(v) && v === fromBase(problem.answer, problem.answerBase);
+    }
+  }
 }
 
 export function accuracy(list) {
@@ -198,11 +229,41 @@ const TAG_NAMES = {
   d2h: '十進位 → 十六進位',
   b2h: '二進位 → 十六進位',
   h2b: '十六進位 → 二進位',
+  'div-exact': '整除',
+  add3: '三位數加法',
+  sub3: '三位數減法',
+  'sub3-borrow': '三位數減法（借位）',
+  'sub3-chain': '三位數減法（跨 0 連續借位）',
+  mul3x1: '三位數 × 一位數',
+  'div-rem': '有餘數的除法',
+  'mix-order': '四則混合（先乘除後加減）',
+  'mix-paren': '四則混合（括號）',
+  pow2: '2 的次方',
+  'pow2-log': '反推 2 的幾次方',
+  x2: '乘以 2',
+  half: '除以 2',
+  binadd: '二進位加法',
+  ones: '1 的補數',
+  twos: '2 的補數',
+  'twos-decode': '2 補數換十進位',
+  'twos-encode': '負數換 2 補數',
+  'range-unsigned': '無號數範圍',
+  'range-ones': '1 的補數範圍',
+  'range-twos': '2 的補數範圍',
+  cidr2mask: 'CIDR → 遮罩',
+  mask2cidr: '遮罩 → CIDR',
+  hosts: '可用主機數',
+  netaddr: '網路位址',
+  bcast: '廣播位址',
+  samenet: '是否同網段',
 };
 
 export function tagName(tag) {
   if (TAG_NAMES[tag]) return TAG_NAMES[tag];
   let m;
+  if ((m = tag.match(/^div:(\d+)$/))) return `÷ ${m[1]}`;
+  if ((m = tag.match(/^pow2:(\d+)$/))) return `2 的 ${m[1]} 次方`;
+  if ((m = tag.match(/^units:(\w+)>(\w+)$/))) return `${m[1]} → ${m[2]}`;
   if ((m = tag.match(/^mul:(\d+)x(\d+)$/))) return `${m[1]} × ${m[2]}`;
   if ((m = tag.match(/^add:(\d+)\+(\d+)$/))) return `${m[1]} + ${m[2]}`;
   if ((m = tag.match(/^sub:(\d+)-(\d+)$/))) return `${m[1]} − ${m[2]}`;

@@ -1,11 +1,70 @@
 import { test, eq, ok } from './runner.js';
 import { mulberry32 } from '../js/rng.js';
-import { makeMulTable, makeAdd1 } from '../js/arith.js';
+import { makeMulTable, makeAdd1, makeDivRem } from '../js/arith.js';
 import { makeBase } from '../js/base.js';
+import { makeTwosDecode, makeRange } from '../js/bits.js';
+import { makeCidrToMask, makeSame } from '../js/subnet.js';
 import {
   defaultState, normalizeState, validateBackup, makeBackup, dayKey, streak, isCorrect,
-  nextLevel, recordAnswer, setLevel, weakness, generateProblem, weakTags, tagName, needsBackup,
+  nextLevel, recordAnswer, setLevel, weakness, generateProblem, weakTags, tagName, needsBackup, MODULES,
 } from '../js/engine.js';
+
+/** 鍵盤上實際會打出來的字：負號是「−」，商餘數用逗號接起來。 */
+const KEYPAD_CHARS = {
+  dec: /^[0-9]+$/, bin: /^[01]+$/, hex: /^[0-9A-F]+$/, divmod: /^[0-9]+,[0-9]+$/,
+  ip: /^[0-9.]+$/, signed: /^−?[0-9]+$/, choice: /^(yes|no)$/,
+};
+const typed = (p) => (p.answerKind === 'signed' ? p.answer.replace('-', '−') : p.answer);
+
+test('每個模組、每一級：正確答案都能用該題的鍵盤打出來，而且判定為對', () => {
+  const rng = mulberry32(99);
+  const s = defaultState();
+  for (const [id, m] of Object.entries(MODULES)) {
+    for (let lv = 1; lv <= m.maxLevel; lv++) {
+      for (let i = 0; i < 300; i++) {
+        const p = generateProblem(s, id, rng, lv);
+        const t = typed(p);
+        ok(KEYPAD_CHARS[p.keypad], `${id} 沒有定義鍵盤 ${p.keypad}`);
+        ok(KEYPAD_CHARS[p.keypad].test(t), `${id} Lv${lv} 答案 ${t} 用 ${p.keypad} 鍵盤打不出來`);
+        ok(t.replace(/[−,]/g, '').length <= 15, `${id} 答案太長 ${t}`);
+        eq(isCorrect(p, t), true, `${id} Lv${lv} ${p.prompt}`);
+        eq(p.module, id);
+        eq(p.level, lv);
+        ok(p.tags.length > 0 && p.tags.every((tag) => tagName(tag) !== tag), `${id} 題型 ${p.tags} 沒有中文名稱`);
+        ok(JSON.parse(JSON.stringify(p)).steps.length === p.steps.length, '題目要能存進 localStorage');
+      }
+    }
+  }
+});
+
+test('判斷答案：商餘數、IP、是非、負數', () => {
+  const d = makeDivRem(157, 4);
+  eq(isCorrect(d, '39,1'), true);
+  eq(isCorrect(d, '039,01'), true);
+  eq(isCorrect(d, '39,'), false);
+  eq(isCorrect(d, '1,39'), false);
+  const ip = makeCidrToMask(26);
+  eq(isCorrect(ip, '255.255.255.192'), true);
+  eq(isCorrect(ip, '255.255.255.0192'), false);
+  eq(isCorrect(ip, '255.255.255'), false);
+  const c = makeSame('192.168.1.10', '192.168.1.20', 24);
+  eq(isCorrect(c, 'yes'), true);
+  eq(isCorrect(c, 'no'), false);
+  const n = makeTwosDecode(0b11111011);
+  eq(isCorrect(n, '−5'), true);
+  eq(isCorrect(n, '-5'), true);
+  eq(isCorrect(n, '5'), false);
+  eq(isCorrect(n, '−'), false);
+  eq(isCorrect(makeRange('unsigned', 8, 'max'), '255'), true);
+});
+
+test('舊版備份（只有兩個模組）匯入後，新模組自動補上', () => {
+  const old = { modules: { arith: { level: 3, history: [], recent: [] }, base: { level: 2, history: [], recent: [] } }, days: {} };
+  const s = normalizeState(old);
+  eq(s.modules.arith.level, 3);
+  eq(s.modules.subnet, { level: 1, history: [], recent: [] });
+  eq(Object.keys(s.modules), Object.keys(MODULES));
+});
 
 const T = (n) => Array(n).fill(true);
 const F = (n) => Array(n).fill(false);
@@ -60,7 +119,7 @@ test('recordAnswer：記錄題型的錯誤', () => {
 test('手動選等級：限制在 1 到最高級之間', () => {
   const s = defaultState();
   setLevel(s, 'arith', 99);
-  eq(s.modules.arith.level, 3);
+  eq(s.modules.arith.level, MODULES.arith.maxLevel);
   setLevel(s, 'base', 0);
   eq(s.modules.base.level, 1);
 });
@@ -140,7 +199,7 @@ test('normalizeState：壞掉或舊的資料不會讓程式出錯', () => {
   eq(normalizeState(null), defaultState());
   eq(normalizeState('亂碼'), defaultState());
   const s = normalizeState({ modules: { arith: { level: 99 } }, settings: { pace: 'sprint' } });
-  eq(s.modules.arith.level, 3);
+  eq(s.modules.arith.level, MODULES.arith.maxLevel);
   eq(s.modules.base.level, 1);
   eq(s.settings, { pace: 'sprint', minutes: 5, theme: 'dark' });
 });
