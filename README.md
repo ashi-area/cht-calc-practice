@@ -20,3 +20,5 @@
 - `js/app.js`：畫面
 - `sw.js`：離線快取。發布新版時把裡面的 `VERSION` 加 1
 - `tests/`：單元測試，用瀏覽器打開 `tests/index.html` 就會執行，標題顯示 PASS 代表全部通過
+- `tools/serve.py`：在電腦上預覽用的小伺服器，`python tools/serve.py . 8765` 後打開 http://localhost:8765/
+- `tools/count_cards.py`：數 Obsidian 計概筆記裡有幾張 Spaced Repetition 卡片，和外掛顯示的數量對照
