@@ -1,7 +1,7 @@
 {
   "name": "計算練習",
   "short_name": "計算練習",
-  "description": "中華電信招考用的計算練習：四則運算與進位轉換，可離線使用。",
+  "description": "四則運算與進位轉換的計算練習，可離線使用。",
   "lang": "zh-Hant",
   "start_url": "./",
   "scope": "./",

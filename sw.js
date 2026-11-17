@@ -1,6 +1,6 @@
 // Service worker：第一次打開後把整個 App 存在手機裡，之後沒有網路也能用。
 // 每次發布新版時，把 VERSION 加 1，手機下次開 App 就會換成新版。
-const VERSION = 'v1';
+const VERSION = 'v2';
 const CACHE = `cht-calc-${VERSION}`;
 const FILES = [
   './',
