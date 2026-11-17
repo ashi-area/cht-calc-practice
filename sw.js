@@ -1,6 +1,6 @@
 // Service worker：第一次打開後把整個 App 存在手機裡，之後沒有網路也能用。
 // 每次發布新版時，把 VERSION 加 1，手機下次開 App 就會換成新版。
-const VERSION = 'v2';
+const VERSION = 'v3';
 const CACHE = `cht-calc-${VERSION}`;
 const FILES = [
   './',
@@ -18,8 +18,14 @@ const FILES = [
   'icons/apple-touch-icon.png',
 ];
 
+// GitHub Pages 會讓瀏覽器暫存檔案 10 分鐘。建立新版快取時用 cache: 'reload'
+// 直接向網站拿最新的檔案，避免把瀏覽器暫存的舊檔案存進新版快取。
 self.addEventListener('install', (event) => {
-  event.waitUntil(caches.open(CACHE).then((c) => c.addAll(FILES)).then(() => self.skipWaiting()));
+  event.waitUntil(
+    caches.open(CACHE)
+      .then((c) => c.addAll(FILES.map((f) => new Request(f, { cache: 'reload' }))))
+      .then(() => self.skipWaiting()),
+  );
 });
 
 self.addEventListener('activate', (event) => {
@@ -33,16 +39,19 @@ self.addEventListener('activate', (event) => {
 // 先用手機裡存的版本（快、離線也能用），同時在背景上網抓新版存起來。
 self.addEventListener('fetch', (event) => {
   const req = event.request;
-  if (req.method !== 'GET' || new URL(req.url).origin !== self.location.origin) return;
+  const url = new URL(req.url);
+  if (req.method !== 'GET' || url.origin !== self.location.origin) return;
+  url.search = '';
+  const key = url.href; // 網址後面的 ?參數 不另外存一份
   event.respondWith(
     caches.open(CACHE).then(async (cache) => {
-      const cached = await cache.match(req, { ignoreSearch: true });
-      const network = fetch(req)
+      const cached = await cache.match(key);
+      const network = fetch(req.url, { cache: 'no-cache' })
         .then((res) => {
-          if (res.ok) cache.put(req, res.clone());
+          if (res.ok) cache.put(key, res.clone());
           return res;
         })
-        .catch(() => cached);
+        .catch(() => cached || Response.error());
       if (cached) {
         event.waitUntil(network.then(() => undefined));
         return cached;
